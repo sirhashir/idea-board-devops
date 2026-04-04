@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: idea-board
+  labels:
+    app: idea-board
+    managed-by: kubectl

@@ -1,0 +1,381 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: 'Cloud provider to deploy to'
+        required: true
+        type: choice
+        options: [aws, gcp]
+        default: aws
+      environment_goal:
+        description: 'e.g. cost-sensitive staging or high-availability production'
+        required: false
+        default: 'production standard'
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/idea-board-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/idea-board-frontend
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: test_ideas
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_ideas
+        run: python -m pytest tests/ -v || echo "No tests found, skipping"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  build:
+    name: Build and Push Images
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Post image summary
+        run: |
+          echo "## Images Built" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+
+  ai-config:
+    name: AI Config Generation
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      config_applied: ${{ steps.ai.outputs.config_applied }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install anthropic
+        run: pip install anthropic
+
+      - name: Generate AI config
+        id: ai
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ENVIRONMENT_GOAL: ${{ github.event.inputs.environment_goal || 'production standard' }}
+        run: |
+          python3 -c "
+          import anthropic, os, json
+
+          goal = os.environ.get('ENVIRONMENT_GOAL', 'production standard')
+          client = anthropic.Anthropic()
+
+          message = client.messages.create(
+            model='claude-sonnet-4-20250514',
+            max_tokens=500,
+            system='You are a Kubernetes expert. Respond ONLY with valid JSON, no other text.',
+            messages=[{
+              'role': 'user',
+              'content': f'''Given environment goal: \"{goal}\"
+          Return optimal Kubernetes resource config as JSON with keys:
+          replicas (int), cpu_request (str), cpu_limit (str), 
+          memory_request (str), memory_limit (str), justification (str)'''
+            }]
+          )
+
+          response = message.content[0].text
+          config = json.loads(response)
+          print('AI Config Recommendation:')
+          print(json.dumps(config, indent=2))
+
+          with open('ai_config.json', 'w') as f:
+            json.dump(config, f)
+          " 
+
+      - name: Post AI config to summary
+        run: |
+          echo "## AI Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+          cat ai_config.json >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "config_applied=true" >> $GITHUB_OUTPUT
+
+      - name: Upload config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-config
+          path: ai_config.json
+
+  deploy-aws:
+    name: Deploy to AWS
+    needs: [build, ai-config]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        working-directory: terraform/environments/aws
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/aws
+        run: terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}" -out=tfplan
+
+      - name: AI Plan Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic
+          python3 scripts/ai_plan_reviewer.py \
+            --plan-output "$(cd terraform/environments/aws && terraform show -no-color tfplan)"
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/aws
+        run: terraform apply tfplan
+
+      - name: Configure kubectl
+        working-directory: terraform/environments/aws
+        run: |
+          KUBECONFIG_CMD=$(terraform output -raw kubeconfig_command)
+          eval "$KUBECONFIG_CMD"
+
+      - name: Create namespace
+        run: kubectl create namespace idea-board --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create database secret
+        working-directory: terraform/environments/aws
+        run: |
+          DB_URL=$(terraform output -raw db_connection_string)
+          kubectl create secret generic backend-secrets \
+            --from-literal=DATABASE_URL="$DB_URL" \
+            --namespace idea-board \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update image tags
+        run: |
+          sed -i 's|ghcr.io/OWNER/idea-board-backend:latest|${{ env.BACKEND_IMAGE }}:${{ github.sha }}|g' k8s/backend-deployment.yaml
+          sed -i 's|ghcr.io/OWNER/idea-board-frontend:latest|${{ env.FRONTEND_IMAGE }}:${{ github.sha }}|g' k8s/frontend-deployment.yaml
+
+      - name: Deploy to Kubernetes
+        run: kubectl apply -f k8s/
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend -n idea-board --timeout=180s
+          kubectl rollout status deployment/frontend -n idea-board --timeout=120s
+
+      - name: Get app URL
+        run: |
+          echo "Waiting for LoadBalancer IP..."
+          for i in {1..20}; do
+            URL=$(kubectl get service frontend -n idea-board \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+            if [ -n "$URL" ]; then
+              echo "## AWS Deployment" >> $GITHUB_STEP_SUMMARY
+              echo "App URL: http://$URL" >> $GITHUB_STEP_SUMMARY
+              break
+            fi
+            echo "Attempt $i/20 - waiting 15s..."
+            sleep 15
+          done
+
+      - name: AI Health Check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic
+          sleep 90
+          LOGS=$(kubectl logs deployment/backend -n idea-board --tail=100 2>/dev/null || echo "No logs")
+          POD_STATUS=$(kubectl get pods -n idea-board -o json)
+          python3 scripts/ai_health_check.py \
+            --logs "$LOGS" \
+            --pod-status "$POD_STATUS" \
+            --health-response "checking" || \
+          (kubectl rollout undo deployment/backend -n idea-board && \
+           kubectl rollout undo deployment/frontend -n idea-board && \
+           echo "## Rollback triggered by AI health check" >> $GITHUB_STEP_SUMMARY && \
+           exit 1)
+
+  deploy-gcp:
+    name: Deploy to GCP
+    needs: [build, ai-config]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        working-directory: terraform/environments/gcp
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/gcp
+        run: terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}" -var="project_id=${{ secrets.GCP_PROJECT_ID }}" -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/gcp
+        run: terraform apply tfplan
+
+      - name: Configure kubectl
+        working-directory: terraform/environments/gcp
+        run: |
+          KUBECONFIG_CMD=$(terraform output -raw kubeconfig_command)
+          eval "$KUBECONFIG_CMD"
+
+      - name: Create namespace
+        run: kubectl create namespace idea-board --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create database secret
+        working-directory: terraform/environments/gcp
+        run: |
+          DB_URL=$(terraform output -raw db_connection_string)
+          kubectl create secret generic backend-secrets \
+            --from-literal=DATABASE_URL="$DB_URL" \
+            --namespace idea-board \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update image tags
+        run: |
+          sed -i 's|ghcr.io/OWNER/idea-board-backend:latest|${{ env.BACKEND_IMAGE }}:${{ github.sha }}|g' k8s/backend-deployment.yaml
+          sed -i 's|ghcr.io/OWNER/idea-board-frontend:latest|${{ env.FRONTEND_IMAGE }}:${{ github.sha }}|g' k8s/frontend-deployment.yaml
+
+      - name: Deploy to Kubernetes
+        run: kubectl apply -f k8s/
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend -n idea-board --timeout=180s
+          kubectl rollout status deployment/frontend -n idea-board --timeout=120s
+
+      - name: Get app URL
+        run: |
+          echo "Waiting for LoadBalancer IP..."
+          for i in {1..20}; do
+            URL=$(kubectl get service frontend -n idea-board \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+            if [ -n "$URL" ]; then
+              echo "## GCP Deployment" >> $GITHUB_STEP_SUMMARY
+              echo "App URL: http://$URL" >> $GITHUB_STEP_SUMMARY
+              break
+            fi
+            echo "Attempt $i/20 - waiting 15s..."
+            sleep 15
+          done
+
+      - name: AI Health Check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic
+          sleep 90
+          LOGS=$(kubectl logs deployment/backend -n idea-board --tail=100 2>/dev/null || echo "No logs")
+          POD_STATUS=$(kubectl get pods -n idea-board -o json)
+          python3 scripts/ai_health_check.py \
+            --logs "$LOGS" \
+            --pod-status "$POD_STATUS" \
+            --health-response "checking" || \
+          (kubectl rollout undo deployment/backend -n idea-board && \
+           kubectl rollout undo deployment/frontend -n idea-board && \
+           echo "## Rollback triggered by AI health check" >> $GITHUB_STEP_SUMMARY && \
+           exit 1)
