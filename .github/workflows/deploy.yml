@@ -326,6 +326,11 @@ jobs:
         working-directory: terraform/environments/gcp
         run: terraform init
 
+      - name: Terraform Force Unlock
+        working-directory: terraform/environments/gcp
+        run: terraform force-unlock -force 1775397010804416
+        continue-on-error: true
+
       - name: Terraform Plan
         working-directory: terraform/environments/gcp
         run: terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}" -var="project_id=${{ secrets.GCP_PROJECT_ID }}" -out=tfplan
