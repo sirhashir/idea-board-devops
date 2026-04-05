@@ -146,27 +146,44 @@ jobs:
           goal = os.environ.get('ENVIRONMENT_GOAL', 'production standard')
           client = anthropic.Anthropic()
 
-          message = client.messages.create(
-            model='claude-sonnet-4-20250514',
-            max_tokens=500,
-            system='You are a Kubernetes expert. Respond ONLY with valid JSON, no other text.',
-            messages=[{
-              'role': 'user',
-              'content': f'''Given environment goal: \"{goal}\"
-          Return optimal Kubernetes resource config as JSON with keys:
-          replicas (int), cpu_request (str), cpu_limit (str), 
-          memory_request (str), memory_limit (str), justification (str)'''
-            }]
-          )
+          try:
+            message = client.messages.create(
+              model='claude-opus-4-5',
+              max_tokens=500,
+              system='You are a Kubernetes expert. Respond ONLY with a valid JSON object. No markdown, no backticks, no explanation. Just the raw JSON.',
+              messages=[{
+                'role': 'user',
+                'content': f'Given environment goal: \"{goal}\". Return JSON with keys: replicas (int), cpu_request (str), cpu_limit (str), memory_request (str), memory_limit (str), justification (str)'
+              }]
+            )
 
-          response = message.content[0].text
-          config = json.loads(response)
-          print('AI Config Recommendation:')
-          print(json.dumps(config, indent=2))
+            response = message.content[0].text.strip()
+            print(f'Raw response: {response}')
 
-          with open('ai_config.json', 'w') as f:
-            json.dump(config, f)
-          " 
+            if response.startswith('\`\`\`'):
+              lines = response.split('\n')
+              response = '\n'.join(lines[1:-1])
+
+            config = json.loads(response)
+            print('AI Config:')
+            print(json.dumps(config, indent=2))
+
+            with open('ai_config.json', 'w') as f:
+              json.dump(config, f)
+
+          except Exception as e:
+            print(f'AI config failed: {e}')
+            default = {
+              'replicas': 2,
+              'cpu_request': '100m',
+              'cpu_limit': '500m',
+              'memory_request': '128Mi',
+              'memory_limit': '256Mi',
+              'justification': 'Default config used'
+            }
+            with open('ai_config.json', 'w') as f:
+              json.dump(default, f)
+          "
 
       - name: Post AI config to summary
         run: |
