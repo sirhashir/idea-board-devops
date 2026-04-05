@@ -151,8 +151,7 @@ resource "google_container_cluster" "this" {
   remove_default_node_pool = true
   initial_node_count       = 1
   project                  = var.project_id
-
-  deletion_protection = false
+  deletion_protection      = false
 }
 
 resource "google_container_node_pool" "this" {
@@ -164,8 +163,9 @@ resource "google_container_node_pool" "this" {
   project    = var.project_id
 
   node_config {
-    machine_type    = var.node_type == "t3.small" ? "e2-small" : var.node_type
-    service_account = google_service_account.gke_nodes[0].email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    machine_type = var.node_type == "t3.small" ? "e2-small" : var.node_type
+    disk_type    = "pd-standard"
+    disk_size_gb = 30
+    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
   }
 }
