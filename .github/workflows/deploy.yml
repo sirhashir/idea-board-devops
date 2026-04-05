@@ -217,7 +217,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.9.0
 
       - name: Terraform Init
         working-directory: terraform/environments/aws
@@ -320,7 +320,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.0
+          terraform_version: 1.9.0
 
       - name: Terraform Init
         working-directory: terraform/environments/gcp

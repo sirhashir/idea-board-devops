@@ -1,24 +1,29 @@
+locals {
+  aws_host = var.cloud == "aws" ? aws_db_instance.this[0].address : ""
+  gcp_host = var.cloud == "gcp" ? google_sql_database_instance.this[0].public_ip_address : ""
+  db_host  = var.cloud == "aws" ? local.aws_host : local.gcp_host
+}
+
 output "db_host" {
-  description = "Database host address"
-  value       = var.cloud == "aws" ? aws_db_instance.this[0].address : google_sql_database_instance.this[0].public_ip_address
+  value = local.db_host
 }
 
 output "db_port" {
-  description = "Database port"
-  value       = 5432
+  value = 5432
 }
 
 output "db_name" {
-  description = "Database name"
-  value       = var.db_name
+  value = var.db_name
 }
 
 output "db_username" {
-  description = "Database username"
-  value       = var.db_username
+  value = var.db_username
+}
+
+output "db_password" {
+  value = var.db_password
 }
 
 output "connection_string" {
-  description = "Full PostgreSQL connection string for the backend"
-  value       = var.cloud == "aws" ? "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.this[0].address}:5432/${var.db_name}" : "postgresql://${var.db_username}:${var.db_password}@${google_sql_database_instance.this[0].public_ip_address}:5432/${var.db_name}"
+  value = "postgresql://${var.db_username}:${var.db_password}@${local.db_host}:5432/${var.db_name}"
 }
