@@ -318,6 +318,11 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Install GKE Auth Plugin
+        run: |
+          gcloud components install gke-gcloud-auth-plugin --quiet
+          echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
@@ -337,6 +342,7 @@ jobs:
       - name: Configure kubectl
         working-directory: terraform/environments/gcp
         run: |
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=True
           KUBECONFIG_CMD=$(terraform output -raw kubeconfig_command)
           eval "$KUBECONFIG_CMD"
 
