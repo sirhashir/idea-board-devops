@@ -328,12 +328,19 @@ jobs:
 
       - name: Terraform Force Unlock
         working-directory: terraform/environments/gcp
-        run: terraform force-unlock -force 1775397010804416
+        run: |
+          LOCK_ID=$(gsutil cat gs://idea-board-tfstate-gcp/gcp/default.tflock 2>/dev/null | python3 -c "import sys,json; data=json.load(sys.stdin); print(data['ID'])" 2>/dev/null || echo "")
+          if [ -n "$LOCK_ID" ]; then
+            echo "Found stale lock: $LOCK_ID — force unlocking"
+            terraform force-unlock -force $LOCK_ID
+          else
+            echo "No stale lock found"
+          fi
         continue-on-error: true
 
       - name: Terraform Plan
         working-directory: terraform/environments/gcp
-        run: terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}" -var="project_id=${{ secrets.GCP_PROJECT_ID }}" -out=tfplan
+        run: terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}" -var="project_id=${{ secrets.GCP_PROJECT_ID }}" -lock=false -out=tfplan
 
       - name: Terraform Apply
         working-directory: terraform/environments/gcp
