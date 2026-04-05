@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/OWNER/idea-board-backend:latest
+          image: ghcr.io/sirhashir/idea-board-backend:latest
           ports:
             - containerPort: 8000
           envFrom:
