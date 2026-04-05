@@ -13,6 +13,11 @@ terraform {
   }
 }
 
+provider "google" {
+  project = "fake-project"
+  region  = "us-central1"
+}
+
 provider "aws" {
   region = var.region
 }
