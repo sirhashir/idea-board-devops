@@ -20,6 +20,5 @@ output "db_username" {
 
 output "connection_string" {
   description = "Full PostgreSQL connection string for the backend"
-  sensitive   = true
   value       = var.cloud == "aws" ? "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.this[0].address}:5432/${var.db_name}" : "postgresql://${var.db_username}:${var.db_password}@${google_sql_database_instance.this[0].public_ip_address}:5432/${var.db_name}"
 }

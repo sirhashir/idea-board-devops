@@ -57,7 +57,6 @@ output "kubeconfig_command" {
 
 output "db_connection_string" {
   value     = module.database.connection_string
-  sensitive = true
 }
 
 output "cluster_name" {
