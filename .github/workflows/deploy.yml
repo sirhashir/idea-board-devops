@@ -353,10 +353,16 @@ jobs:
         working-directory: terraform/environments/gcp
         run: |
           DB_URL=$(terraform output -raw db_connection_string)
+          echo "DB_URL length: ${#DB_URL}"
+          if [ -z "$DB_URL" ]; then
+            echo "ERROR: DB_URL is empty!"
+            exit 1
+          fi
           kubectl create secret generic backend-secrets \
             --from-literal=DATABASE_URL="$DB_URL" \
             --namespace idea-board \
             --dry-run=client -o yaml | kubectl apply -f -
+          echo "Secret created successfully"
 
       - name: Update image tags
         run: |

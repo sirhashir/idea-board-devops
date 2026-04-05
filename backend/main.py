@@ -8,11 +8,11 @@ import models
 import schemas
 from database import engine, get_db, Base
 
-Base.metadata.create_all(bind=engine) #for tables if they dont exist
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Idea Board API")
 
-origins  = os.environ.get("CORS_ORIGINS", "*").split(",")
+origins = os.environ.get("CORS_ORIGINS", "*").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,13 +22,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "db": "connected"}
+    except Exception:
+        raise HTTPException(status_code=503, detail={"status": "error", "db": "unreachable"})
+
+
 @app.get("/api/ideas", response_model=list[schemas.IdeaResponse])
-def get_ideas(db: Session=Depends(get_db)):
+def get_ideas(db: Session = Depends(get_db)):
     return db.query(models.Idea).order_by(models.Idea.created_at.desc()).all()
+
 
 @app.post("/api/ideas", response_model=schemas.IdeaResponse, status_code=201)
 def create_idea(idea: schemas.IdeaCreate, db: Session = Depends(get_db)):
-    db_idea = models.Idea(content = idea.content)
+    db_idea = models.Idea(content=idea.content)
     db.add(db_idea)
     db.commit()
     db.refresh(db_idea)
