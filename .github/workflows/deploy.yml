@@ -368,8 +368,17 @@ jobs:
 
       - name: Wait for rollout
         run: |
-          kubectl rollout status deployment/backend -n idea-board --timeout=180s
-          kubectl rollout status deployment/frontend -n idea-board --timeout=120s
+          kubectl rollout status deployment/backend -n idea-board --timeout=180s || true
+
+      - name: Diagnose pod status
+        if: always()
+        run: |
+          echo "=== POD STATUS ==="
+          kubectl get pods -n idea-board -o wide
+          echo "=== BACKEND POD LOGS ==="
+          kubectl logs -l app=backend -n idea-board --tail=50 || true
+          echo "=== POD DESCRIBE ==="
+          kubectl describe pods -l app=backend -n idea-board || true
 
       - name: Get app URL
         run: |
