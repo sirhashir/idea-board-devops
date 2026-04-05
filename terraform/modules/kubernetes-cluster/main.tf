@@ -136,6 +136,13 @@ resource "google_container_cluster" "this" {
   initial_node_count       = 1
   project                  = var.project_id
   deletion_protection      = false
+
+  node_config {
+    disk_type    = "pd-standard"
+    disk_size_gb = 30
+    machine_type = "e2-small"
+    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+  }
 }
 
 resource "google_container_node_pool" "this" {
@@ -147,7 +154,7 @@ resource "google_container_node_pool" "this" {
   project    = var.project_id
 
   node_config {
-    machine_type = var.node_type == "t3.small" ? "e2-small" : var.node_type
+    machine_type = "e2-small"
     disk_type    = "pd-standard"
     disk_size_gb = 30
     oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
