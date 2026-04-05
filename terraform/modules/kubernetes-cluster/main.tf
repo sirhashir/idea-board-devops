@@ -124,22 +124,6 @@ resource "aws_eks_node_group" "this" {
   }
 }
 
-#GCP SERVICE ACCOUNT FOR GKE NODES
-
-resource "google_service_account" "gke_nodes" {
-  count        = var.cloud == "gcp" ? 1 : 0
-  account_id   = "${var.cluster_name}-node-sa"
-  display_name = "GKE Node Service Account"
-  project      = var.project_id
-}
-
-resource "google_project_iam_member" "gke_node_role" {
-  count   = var.cloud == "gcp" ? 1 : 0
-  project = var.project_id
-  role    = "roles/container.nodeServiceAccount"
-  member  = "serviceAccount:${google_service_account.gke_nodes[0].email}"
-}
-
 #GCP GKE CLUSTER
 
 resource "google_container_cluster" "this" {
