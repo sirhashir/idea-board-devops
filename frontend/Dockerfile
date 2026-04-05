@@ -3,10 +3,10 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci && chmod +x node_modules/.bin/vite
+RUN npm ci
 
 COPY . .
-RUN ./node_modules/.bin/vite build
+RUN chmod +x node_modules/.bin/vite && ./node_modules/.bin/vite build
 
 FROM nginx:1.25-alpine
 
