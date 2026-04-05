@@ -25,5 +25,7 @@ output "db_password" {
 }
 
 output "connection_string" {
+  description = "Full PostgreSQL connection string"
+  sensitive   = true
   value = "postgresql://${var.db_username}:${var.db_password}@${local.db_host}:5432/${var.db_name}"
 }
